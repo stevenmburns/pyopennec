@@ -12,10 +12,6 @@ name: wheels
 on:
   push:
     tags: ["v*"]
-    # TEMPORARY: GitHub cannot dispatch a workflow that is not yet on the
-    # default branch, so the branch that introduces this file runs the
-    # dispatch path on push.  Drop once wheels.yml is on main.
-    branches: [wheels]
   pull_request:
     paths:
       - "CMakeLists.txt"
