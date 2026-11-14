@@ -26,8 +26,10 @@ def onec():
         return env
     exe = ROOT / "build" / "onec" / "onec"
     if not exe.exists() or exe.stat().st_mtime < _newest_source_mtime():
-        subprocess.run(["bash", str(ROOT / "tools" / "build_onec.sh"), str(exe.parent)],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        r = subprocess.run(["bash", str(ROOT / "tools" / "build_onec.sh"), str(exe.parent)],
+                           capture_output=True, text=True)
+        if r.returncode:
+            pytest.fail(f"tools/build_onec.sh failed (exit {r.returncode}):\n{r.stderr[-4000:]}")
     return str(exe)
 
 
