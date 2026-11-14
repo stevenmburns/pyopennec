@@ -89,14 +89,52 @@ set cancel raises `porty.Cancelled`.  Out of scope by design: surface
 patches, helices and arcs (write them as straight wires), plane-wave and
 current-source excitation, NT / TL (do them on `Y`), GN 3 and NGF files.
 
-`pyopennec.OPENNEC_VERSION`, `pyopennec.BACKEND` (`"openblas"` or
-`"original"`) and `pyopennec.OPENMP` say which build you have.
+`pyopennec.OPENNEC_VERSION`, `pyopennec.BACKEND` (`"openblas"`,
+`"scipy-openblas32"`, `"accelerate"` or `"original"`) and `pyopennec.OPENMP`
+say which build you have.
 
 Why not PyNEC's card-by-card API: a circuit solver wants the port
 admittances and nothing else, and an interface of its own keeps pyopennec
 free of anything derived from PyNEC (GPL).
 
 ## Install
+
+Release wheels (one per platform, `cp312-abi3`: any CPython >= 3.12) are
+attached to each [GitHub Release](https://github.com/stevenmburns/pyopennec/releases);
+PyPI comes later.  Install one by URL,
+`https://github.com/stevenmburns/pyopennec/releases/download/v<ver>/<wheel>`:
+
+* **Linux x86_64** (glibc >= 2.28):
+  `pyopennec-<ver>-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl`.
+  LAPACK is OpenBLAS from the scipy-openblas32 wheel, vendored.  OpenMP is
+  the system's GCC runtime, `libgomp.so.1`, deliberately not vendored
+  (present on every glibc distribution; `apt install libgomp1` if not).
+* **macOS arm64** (macOS >= 14):
+  `pyopennec-<ver>-cp312-abi3-macosx_14_0_arm64.whl`.  LAPACK is Apple's
+  Accelerate.  OpenMP is Homebrew's libomp, deliberately not vendored, so
+  first `brew install libomp`.
+* **Windows**: not supported for now.  OpenNEC is C99 `complex double`,
+  which MSVC does not have; build from source with a C99 toolchain if you
+  need it.
+
+The exact filenames for a release are on its page; `pyopennec.BACKEND`
+(`"scipy-openblas32"` / `"accelerate"`) and `pyopennec.OPENMP` say what you
+got.
+
+**One process with momwire and PyNEC.**  pyopennec loads beside
+[momwire](https://pypi.org/project/momwire/) and
+[pynec-accel](https://pypi.org/project/pynec-accel/) (PyNEC), all three
+OpenMP-threaded, with no environment workarounds.  That works because none
+of the three wheels ships a private OpenMP runtime: they all share one image
+(the system `libgomp` on Linux, Homebrew's `libomp` on macOS).  A private copy
+is what breaks it -- on Linux a vendored libgomp fails to load once another
+extension loaded the system one ("cannot allocate memory in static TLS
+block"), on macOS two libomp copies abort with OMP Error #15 or deadlock.
+`tools/cross_engine.py` checks this in every import order (CI runs it against
+the built wheel): accelerators loaded, exactly one OpenMP runtime mapped,
+dipole impedances agreeing.
+
+### From source
 
 ```
 git clone --recursive https://github.com/stevenmburns/pyopennec
@@ -113,10 +151,21 @@ python3.14 -m pip install dist/pyopennec-*.whl
 ```
 
 The build needs a C compiler and CMake >= 3.26 (no C++).  It compiles every
-OpenNEC library source (all of `opennec/src` except `main.c`) with OpenMP,
-and links OpenBLAS + LAPACK when `pkg-config openblas` finds them
-(Debian/Ubuntu: `apt install libopenblas-dev liblapack-dev gfortran`);
-otherwise it falls back to OpenNEC's own matrix code.
+OpenNEC library source (all of `opennec/src` except `main.c`) with OpenMP.
+The LAPACK is chosen by the CMake cache variable `PYOPENNEC_BLAS` (pass it as
+`CMAKE_ARGS="-DPYOPENNEC_BLAS=..."`):
+
+* `auto` (the default): a system OpenBLAS + LAPACK when `pkg-config
+  openblas` finds them (Debian/Ubuntu: `apt install libopenblas-dev
+  liblapack-dev gfortran`), else Accelerate on macOS, else OpenNEC's own
+  matrix code (`BACKEND == "original"`, much slower).
+* `openblas`, `scipy-openblas32` (with `-DSCIPY_OPENBLAS32_DIR=<its package
+  dir>`, or importable by the build interpreter), `accelerate`, `original`:
+  exactly that one, and the configure fails if it cannot be had.
+
+`-DPYOPENNEC_REQUIRE_OPENMP=ON` makes a missing OpenMP fatal too (macOS: `brew
+install libomp` and add `-DOpenMP_ROOT=$(brew --prefix libomp)`).  The release
+wheels are built with both, so a wheel can never silently ship the fallback.
 
 ## How it works
 

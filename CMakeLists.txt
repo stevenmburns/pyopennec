@@ -23,11 +23,19 @@ set_target_properties(opennec_core PROPERTIES
   C_STANDARD 11
   C_EXTENSIONS ON)
 target_include_directories(opennec_core PUBLIC ${OPENNEC_DIR} ${OPENNEC_DIR}/src)
+# input.c calls strcasestr, which glibc declares only under _GNU_SOURCE; GCC
+# 14 (manylinux_2_28's toolset) makes the implicit declaration an error.
+if(NOT APPLE)
+  target_compile_definitions(opennec_core PRIVATE _GNU_SOURCE)
+endif()
 # OpenNEC's own -O2; asserts stay compiled in (porty refuses load types
 # outside 0-5 before the engine sees them, which keeps calculations.c's
 # load-type assert unreachable).
 target_compile_options(opennec_core PRIVATE -O2 -Wno-unused-parameter -Wno-unused-function
-  -Wno-format-truncation -Wno-stringop-truncation -U NDEBUG)
+  -Wno-format-truncation -U NDEBUG)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(opennec_core PRIVATE -Wno-stringop-truncation)
+endif()
 
 # --- OpenMP ------------------------------------------------------------------
 # A redistributable wheel passes -DPYOPENNEC_REQUIRE_OPENMP=ON so a build that
