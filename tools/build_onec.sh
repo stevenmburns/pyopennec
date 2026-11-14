@@ -20,7 +20,9 @@ if [[ "$(uname -s)" == Darwin ]]; then
   ldflags=(-L"$omp/lib" -lomp -Wl,-rpath,"$omp/lib" -framework Accelerate)
 else
   cc="${CC:-gcc}"
-  cflags+=(-fopenmp)
+  # glibc declares input.c's strcasestr only under _GNU_SOURCE (an error, not
+  # a warning, from GCC 14 on)
+  cflags+=(-fopenmp -D_GNU_SOURCE)
   ldflags=(-fopenmp)
 fi
 if [[ "$(uname -s)" == Darwin ]]; then

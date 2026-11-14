@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           ls -l wheelhouse
-          test "$(ls wheelhouse/*.whl | wc -l)" = 1
+          test "$(ls wheelhouse/*.whl | wc -l | tr -d ' ')" = 1
           whl=$(ls wheelhouse/*.whl)
           echo "$whl" | grep -q -- '-cp312-abi3-'
           unzip -l "$whl"
