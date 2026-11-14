@@ -4,7 +4,9 @@ Warm-up cycles are excluded (allocator arenas, OpenMP/OpenBLAS pools).  The
 threshold is per cycle: an engine context dropped without engine_destroy()
 alone is ~20 KiB (the Sommerfeld tables), a lost interaction matrix far more.
 """
+import ctypes
 import gc
+import sys
 import threading
 
 import numpy as np
@@ -27,7 +29,25 @@ PH = np.zeros(10)
 PTS = np.array([[0.0, 1.0, 9.0], [1.0, 1.0, 9.5]])
 
 
+class _MachTaskBasicInfo(ctypes.Structure):
+    _fields_ = [("virtual_size", ctypes.c_uint64), ("resident_size", ctypes.c_uint64),
+                ("resident_size_max", ctypes.c_uint64), ("user_time", ctypes.c_int32 * 2),
+                ("system_time", ctypes.c_int32 * 2), ("policy", ctypes.c_int32),
+                ("suspend_count", ctypes.c_int32)]
+
+
 def rss_kib():
+    """Current resident set: /proc on Linux, the Mach task's resident_size
+    (MACH_TASK_BASIC_INFO, what `ps -o rss` reads) on macOS."""
+    if sys.platform == "darwin":
+        libc = ctypes.CDLL(None)
+        info = _MachTaskBasicInfo()
+        count = ctypes.c_uint32(ctypes.sizeof(info) // 4)
+        task = ctypes.c_uint32.in_dll(libc, "mach_task_self_")
+        kr = libc.task_info(task, 20, ctypes.byref(info), ctypes.byref(count))  # 20: MACH_TASK_BASIC_INFO
+        if kr != 0:
+            raise RuntimeError(f"task_info: kern_return {kr}")
+        return info.resident_size // 1024
     with open("/proc/self/status") as f:
         for line in f:
             if line.startswith("VmRSS:"):

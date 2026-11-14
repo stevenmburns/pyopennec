@@ -95,7 +95,8 @@ jobs:
         # the opennec/ submodule must be inside it (sdist.include)
         run: |
           set -euo pipefail
-          tar tzf dist/*.tar.gz | grep -q 'opennec/src/matrix.c'
+          tar tzf dist/*.tar.gz > /tmp/sdist.txt
+          grep -q 'opennec/src/matrix.c' /tmp/sdist.txt
           sudo apt-get update && sudo apt-get install -y libopenblas-dev liblapack-dev gfortran pkg-config
           python3 -m venv /tmp/v && /tmp/v/bin/pip install --upgrade pip
           /tmp/v/bin/pip install dist/*.tar.gz
