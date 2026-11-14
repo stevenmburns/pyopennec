@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: System packages
+        # nec2c is an independent oracle; the onec CLI is built by the suite
+        # itself from the same submodule (tools/build_onec.sh)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev liblapack-dev gfortran pkg-config nec2c
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Build the abi3 wheel (3.12)
+        run: |
+          python3.12 -m venv .venv312
+          .venv312/bin/pip install --upgrade pip
+          CMAKE_BUILD_PARALLEL_LEVEL=4 .venv312/bin/pip wheel . --no-deps -w dist
+          ls dist
+          test "$(ls dist/*.whl | wc -l)" = 1
+          ls dist/*.whl | grep -q -- '-cp312-abi3-'
+      - name: Test on 3.12 (the wheel)
+        run: |
+          .venv312/bin/pip install dist/*.whl pytest
+          .venv312/bin/python -c "import pyopennec; print(pyopennec.__version__, pyopennec.BACKEND, pyopennec.OPENMP, pyopennec.OPENNEC_VERSION)"
+          # src/ layout: the checkout's src/pyopennec is not on sys.path, so
+          # this imports the installed wheel
+          .venv312/bin/python -m pytest -v -p no:cacheprovider
+      - name: Test on 3.14 (the same wheel)
+        run: |
+          python3.14 -m venv .venv314
+          .venv314/bin/pip install dist/*.whl pytest
+          .venv314/bin/python -c "import sys, pyopennec; print(sys.version, pyopennec.__version__)"
+          .venv314/bin/python -m pytest -v -p no:cacheprovider

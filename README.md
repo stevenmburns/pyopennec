@@ -1,0 +1,156 @@
+# pyopennec
+
+[OpenNEC](https://github.com/maurymarkowitz/OpenNEC) (a C rewrite of NEC-2)
+behind an N-port admittance interface.  A structure of straight wires is
+solved once per frequency for its port admittance matrix `Y` and the segment
+currents each port drives; everything a circuit does -- feed voltages,
+transmission lines, matching networks, phasing -- is the caller's, on `Y`.
+Radiation and near fields for any set of port voltages are computed from the
+stored solution without solving again.
+
+The extension is plain C on the CPython Limited API, so one wheel per
+platform (tagged `cp312-abi3`) installs on every CPython from 3.12 on.
+
+## A dipole
+
+```python
+from pyopennec import porty
+
+st = porty.Structure(
+    [(1, 21, (0.0, 0.0, -5.2), (0.0, 0.0, 5.2), 0.001)],  # tag, segments, end 1, end 2, radius (m)
+    ports=[(1, 11)],                                        # segment 11 of tag 1
+)
+sol = st.solve([13.8, 14.2, 14.6])                          # MHz
+z = 1.0 / sol.y[:, 0, 0]                                    # one port: Z = 1 / Y
+ff = porty.far_field(sol, 1, [1.0], theta_deg=[90.0], phi_deg=[0.0])
+print(z, ff.gain_total)
+```
+
+## API
+
+All of it is `pyopennec.porty`.  Lengths are metres, frequencies MHz,
+angles degrees.
+
+**`Structure(wires, *, ports, ground=None, loads=(), extended_kernel=False)`**
+
+* `wires`: `(tag, nseg, (x1, y1, z1), (x2, y2, z2), radius)` per straight
+  wire (NEC's GW).  Wires that share an end are joined as NEC joins them.
+* `ports`: `(tag, seg)` per port, `seg` 1-based within the tag (tag 0
+  counts segments over the whole structure).  A port is an applied-field
+  voltage source on that segment (NEC's EX 0).
+* `ground`: `None` (free space), `"perfect"` (GN 1), `("reflection", epsr,
+  sigma)` (GN 0) or `("sommerfeld", epsr, sigma)` (GN 2), sigma in S/m.  A
+  ground also sets NEC's GE ground-plane flag, so a wire end on z = 0
+  connects to its image.
+* `loads`: an LD card's fields, `(type, tag, seg_from, seg_to, f1, f2, f3)`,
+  types 0-5 (series / parallel RLC, per-metre series / parallel RLC, fixed
+  impedance, wire conductivity), NEC's units.
+* `extended_kernel`: NEC's extended thin-wire kernel (EK 0).
+* `.nseg`, `.nports`.
+
+**`Structure.solve(freqs_mhz, cancel=None, progress=None) -> Solution`** fills,
+factors and solves once per frequency, with the GIL released.  `cancel` is a
+`threading.Event` or a callable returning `bool`, checked before each
+frequency; `progress(done, total)` is called after each.
+
+**`Solution`**
+
+* `y`: `(nf, nports, nports)` complex, siemens.  `Y[i, j]` is the current on
+  port `i`'s segment with 1 V on port `j` and every other port shorted, so
+  **`I = Y @ V`**.  NEC-2 point-matches at segment centres, so `Y` is
+  reciprocal only to discretisation error (about 0.2 % off-diagonal at
+  modest meshes): the orientation matters, and `Y.T @ V` is not the same
+  thing.
+* `basis_currents`: `(nf, nports, nseg)` complex, amperes -- the segment
+  currents for 1 V on each port.  `currents(i_f, port_voltages)` superposes
+  them.
+* `freqs_mhz`, `port_segments` (1-based, over the whole structure) and
+  `segments` (`centres` (nseg, 3), `lengths`, `radii` in metres; `tags`,
+  `numbers` within the tag).
+
+**`far_field(sol, i_f, port_voltages, theta_deg, phi_deg) -> FarField`** at
+the broadcast `(theta, phi)` pairs: `gain_total`, `gain_vert`, `gain_horiz`
+(dBi, power gain), `e_theta`, `e_phi` (r·E, volts), `valid` (False below
+the horizon over ground, where the gains read -999.99) and `power_in` (W
+delivered by the port voltages).
+
+**`near_field(sol, i_f, port_voltages, points, kind="E")`**: E (V/m) or H
+(A/m) at `points` of shape `(..., 3)`, returned complex `(..., 3)`.
+
+Field queries on one `Solution` may come from several threads; they are
+serialised on that solution.  Separate solves run concurrently.
+
+**Refusals.**  Invalid input raises `ValueError` naming the field
+(`wires[1].nseg`, `ports[0].seg: no segment 6 on tag 2`, `loads[0].type`,
+`ground.epsr`, `port_voltages: expected 2 values`, a geometry below a
+ground, port voltages that deliver no power, ...) before anything reaches
+the engine.  An engine failure after validation raises `porty.PortyError`; a
+set cancel raises `porty.Cancelled`.  Out of scope by design: surface
+patches, helices and arcs (write them as straight wires), plane-wave and
+current-source excitation, NT / TL (do them on `Y`), GN 3 and NGF files.
+
+`pyopennec.OPENNEC_VERSION`, `pyopennec.BACKEND` (`"openblas"` or
+`"original"`) and `pyopennec.OPENMP` say which build you have.
+
+Why not PyNEC's card-by-card API: a circuit solver wants the port
+admittances and nothing else, and an interface of its own keeps pyopennec
+free of anything derived from PyNEC (GPL).
+
+## Install
+
+```
+git clone --recursive https://github.com/stevenmburns/pyopennec
+cd pyopennec
+python3.12 -m venv .venv
+.venv/bin/pip install -e ".[test]"
+```
+
+or build the wheel once and install it into any CPython >= 3.12:
+
+```
+python3.12 -m pip wheel . --no-deps -w dist   # dist/pyopennec-*-cp312-abi3-linux_x86_64.whl
+python3.14 -m pip install dist/pyopennec-*.whl
+```
+
+The build needs a C compiler and CMake >= 3.26 (no C++).  It compiles every
+OpenNEC library source (all of `opennec/src` except `main.c`) with OpenMP,
+and links OpenBLAS + LAPACK when `pkg-config openblas` finds them
+(Debian/Ubuntu: `apt install libopenblas-dev liblapack-dev gfortran`);
+otherwise it falls back to OpenNEC's own matrix code.
+
+## How it works
+
+Per frequency, porty runs the steps of OpenNEC's sequential processor
+without its deck reader or report writer: scale the geometry to
+wavelengths, set the ground (and the Sommerfeld tables for GN 2), apply the
+loads, fill the interaction matrix, LU-factor it, and solve for every port at
+once as one multi-right-hand-side solve.  Fields for given port voltages
+superpose the stored per-port solutions and call OpenNEC's own pattern and
+near-field routines, so a field query never refactors.  No text is parsed or
+printed and no Python is called from inside OpenNEC.
+
+## Tests
+
+```
+.venv/bin/python -m pytest
+```
+
+* `test_porty.py` holds porty to recorded card-deck runs of the same
+  OpenNEC sources (`tests/fixtures/porty_oracle.json`, every float stored
+  exactly): Z, Y, superposition and near fields to 1e-9, gains to 1e-6 dB.
+  The fixture was recorded during private development from an earlier
+  card-deck module built on the same OpenNEC sources (opennec `2531311`);
+  this tree cannot regenerate it, so after a submodule bump that moves the
+  numbers the print-precision oracles below are the gate.
+* `test_porty_vs_cli.py` needs no recording: all twelve golden decks of
+  `opennec/tests/golden_tests` (nec2c pins, 1e-4; the TL and NT decks with
+  the network applied on `Y`), the onec CLI built from the same submodule
+  (`tools/build_onec.sh`) at print precision, and nec2c when it is on `PATH`.
+* Reciprocity, threads, cancellation, validation messages and RSS growth.
+
+## Licence and credits
+
+MIT (see `LICENSE`).  The engine is OpenNEC by Maury Markowitz, MIT
+(`opennec/LICENSE`), itself a rewrite of NEC-2, the Numerical
+Electromagnetics Code by G. J. Burke and A. J. Poggio of Lawrence Livermore
+National Laboratory.

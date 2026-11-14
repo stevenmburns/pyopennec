@@ -1,0 +1,3 @@
+[submodule "opennec"]
+	path = opennec
+	url = https://github.com/stevenmburns/OpenNEC.git

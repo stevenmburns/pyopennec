@@ -1,0 +1,34 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pyopennec"
+version = "0.2.0.dev0"
+description = "OpenNEC (a C rewrite of NEC-2) behind an N-port admittance interface, one abi3 wheel"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Steven Burns" }]
+requires-python = ">=3.12"
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.26"
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["src/pyopennec"]
+# _porty is built on the Limited API (Py_LIMITED_API = 3.12), so the wheel is
+# tagged cp312-abi3 and installs on every CPython >= 3.12.
+wheel.py-api = "cp312"
+# the wheel carries compiled OpenNEC, so it carries OpenNEC's MIT notice too
+wheel.license-files = ["LICENSE", "opennec/LICENSE"]
+# The extension is built from the opennec/ submodule; without it the build
+# cannot proceed, so say so up front.
+sdist.include = ["opennec/src/**", "opennec/LICENSE", "csrc/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
