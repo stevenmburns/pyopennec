@@ -32,3 +32,60 @@ sdist.include = ["opennec/src/**", "opennec/LICENSE", "csrc/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# --- redistributable wheels (cibuildwheel; .github/workflows/wheels.yml) -----
+# ONE build per platform: the extension is on the Limited API, so the
+# cp312-abi3 wheel serves every CPython >= 3.12.  Windows is out of scope for
+# now (OpenNEC is C99 `complex double`, which MSVC does not have).
+#
+# The one-process rule: pyopennec must load beside momwire and pynec-accel
+# (PyNEC), all three OpenMP-threaded.  So no wheel here vendors an OpenMP
+# runtime -- every extension in the process shares ONE runtime image (Linux:
+# the system libgomp; macOS: Homebrew's libomp).  tools/cross_engine.py checks
+# exactly that against the built wheel.
+[tool.cibuildwheel]
+build = "cp312-*"
+skip = "*-musllinux_* *_i686 pp*"
+test-requires = "pytest"
+# the whole suite, against the installed wheel (cibuildwheel runs it from a
+# temp dir, and the src/ layout keeps the checkout's package off sys.path);
+# PYOPENNEC_EXPECT_* make test_build.py fail on a wheel that fell back to
+# OpenNEC's own matrix code or lost OpenMP
+test-command = "pytest {project}/tests -p no:cacheprovider -ra"
+
+[tool.cibuildwheel.linux]
+# glibc 2.28 floor, pinned explicitly (also cibuildwheel's default)
+manylinux-x86_64-image = "manylinux_2_28"
+# BLAS/LAPACK from the scipy-openblas32 PyPI wheel, as pynec-accel does: a
+# DYNAMIC_ARCH OpenBLAS with its LAPACK compiled in, pthreads (not OpenMP)
+# threading, no libgfortran, and every symbol prefixed scipy_ so it cannot
+# collide with another BLAS in the process (numpy's, PyNEC's own vendored
+# copy).  CMakeLists.txt maps zgetrf_ / zgetrs_ to the prefixed names.
+# Installed with --target into a fixed dir outside the (isolated) build env,
+# so the repair step below can find the same library.  Pinned: the wheel
+# vendors it, so its version is part of what ships.
+before-build = "pip install --target /tmp/scipy-openblas32 scipy-openblas32==0.3.34.481.3"
+environment = { CMAKE_ARGS = "-DPYOPENNEC_BLAS=scipy-openblas32 -DSCIPY_OPENBLAS32_DIR=/tmp/scipy-openblas32/scipy_openblas32 -DPYOPENNEC_REQUIRE_OPENMP=ON", CMAKE_BUILD_PARALLEL_LEVEL = "4" }
+# Vendor libscipy_openblas; do NOT vendor libgomp (`--exclude libgomp.so.1`).
+# A private libgomp-<hash>.so uses initial-exec TLS and fails to dlopen
+# ("cannot allocate memory in static TLS block") once another extension has
+# loaded the system libgomp -- momwire and pynec-accel both exclude it for
+# that reason, so all three share the system libgomp.so.1 (the GCC OpenMP
+# runtime, present on every glibc distribution; `apt install libgomp1` if not).
+repair-wheel-command = "LD_LIBRARY_PATH=/tmp/scipy-openblas32/scipy_openblas32/lib auditwheel repair --exclude libgomp.so.1 -w {dest_dir} {wheel} && auditwheel show {dest_dir}/*.whl"
+test-environment = { PYOPENNEC_EXPECT_BACKEND = "scipy-openblas32", PYOPENNEC_EXPECT_OPENMP = "1" }
+
+[tool.cibuildwheel.macos]
+# Apple silicon only (the macos-15 runner is arm64).  BLAS/LAPACK is Apple's
+# Accelerate (OpenNEC's HAVE_ACCELERATE path, new LAPACK interface), a system
+# framework, so nothing is vendored for it.  OpenMP is Homebrew's libomp,
+# linked by its absolute install name and NOT vendored (`--exclude libomp`):
+# momwire and pynec-accel exclude it too, so all three share one libomp image
+# (two private copies abort with OMP Error #15 or deadlock at a join barrier).
+# `brew install libomp` is therefore a runtime requirement of the macOS wheel.
+# Deployment target 14.0 like momwire: libomp is not vendored, so the floor is
+# our own code's.
+archs = ["arm64"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "14.0", CMAKE_ARGS = "-DPYOPENNEC_BLAS=accelerate -DPYOPENNEC_REQUIRE_OPENMP=ON -DOpenMP_ROOT=/opt/homebrew/opt/libomp", CMAKE_BUILD_PARALLEL_LEVEL = "4" }
+repair-wheel-command = "DYLD_LIBRARY_PATH=$(brew --prefix libomp)/lib delocate-wheel --exclude libomp --require-archs {delocate_archs} -w {dest_dir} -v {wheel} && delocate-listdeps --all {dest_dir}/*.whl"
+test-environment = { PYOPENNEC_EXPECT_BACKEND = "accelerate", PYOPENNEC_EXPECT_OPENMP = "1" }
