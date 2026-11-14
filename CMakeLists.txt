@@ -24,9 +24,11 @@ set_target_properties(opennec_core PROPERTIES
   C_EXTENSIONS ON)
 target_include_directories(opennec_core PUBLIC ${OPENNEC_DIR} ${OPENNEC_DIR}/src)
 # input.c calls strcasestr, which glibc declares only under _GNU_SOURCE; GCC
-# 14 (manylinux_2_28's toolset) makes the implicit declaration an error.
+# 14 (manylinux_2_28's toolset) makes the implicit declaration an error.  That
+# file only: _GNU_SOURCE also exposes glibc's error_t, which collides with
+# OpenNEC's own (types.h) wherever errno.h is included.
 if(NOT APPLE)
-  target_compile_definitions(opennec_core PRIVATE _GNU_SOURCE)
+  set_source_files_properties(${OPENNEC_DIR}/src/input.c PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
 endif()
 # OpenNEC's own -O2; asserts stay compiled in (porty refuses load types
 # outside 0-5 before the engine sees them, which keeps calculations.c's
