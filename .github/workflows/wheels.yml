@@ -1,0 +1,195 @@
+name: wheels
+
+# Redistributable abi3 wheels (Linux x86_64 manylinux_2_28, macOS arm64) and
+# the sdist.  A `v*` tag builds, tests and attaches them to a GitHub Release;
+# workflow_dispatch does everything but the release (for iterating).
+#
+#   pip install https://github.com/stevenmburns/pyopennec/releases/download/v<ver>/<wheel>
+#
+# The cibuildwheel configuration (BLAS per platform, the OpenMP runtime NOT
+# vendored) lives in pyproject.toml's [tool.cibuildwheel*] sections.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build_wheels:
+    name: wheel ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Assert the tag matches the package version (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          grep -Fxq "version = \"${TAG#v}\"" pyproject.toml || {
+            echo "pyproject.toml version does not match tag ${TAG}"; exit 1; }
+          grep -Fxq "__version__ = \"${TAG#v}\"" src/pyopennec/__init__.py || {
+            echo "src/pyopennec/__init__.py __version__ does not match tag ${TAG}"; exit 1; }
+      - name: Install libomp (macOS OpenMP runtime, build and run time)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+      - name: Build (and test) the wheel
+        uses: pypa/cibuildwheel@v4.3.5
+      - name: The OpenMP runtime is NOT vendored, the BLAS is what it should be
+        # Regression guard for --exclude: a vendored libgomp/libomp is a second
+        # OpenMP runtime in any process that also loads momwire or PyNEC.
+        run: |
+          set -euo pipefail
+          ls -l wheelhouse
+          test "$(ls wheelhouse/*.whl | wc -l)" = 1
+          whl=$(ls wheelhouse/*.whl)
+          echo "$whl" | grep -q -- '-cp312-abi3-'
+          unzip -l "$whl"
+          if unzip -l "$whl" | grep -Eqi 'lib(g|i)?omp'; then
+            echo "ERROR: $whl vendors an OpenMP runtime"; exit 1; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            unzip -l "$whl" | grep -q 'pyopennec.libs/libscipy_openblas' || {
+              echo "ERROR: libscipy_openblas is not vendored"; exit 1; }
+          else
+            if unzip -l "$whl" | grep -qi '\.dylib'; then
+              echo "ERROR: the macOS wheel vendors a dylib (expected none)"; exit 1; fi
+            mkdir -p x && (cd x && unzip -q "../$whl")
+            otool -L x/pyopennec/_porty*.so
+            otool -L x/pyopennec/_porty*.so | grep -q '/opt/homebrew/opt/libomp/lib/libomp.dylib'
+            otool -L x/pyopennec/_porty*.so | grep -q 'Accelerate.framework'
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  sdist:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build the sdist
+        run: pipx run build --sdist
+      - name: The sdist builds the extension from source
+        # the opennec/ submodule must be inside it (sdist.include)
+        run: |
+          set -euo pipefail
+          tar tzf dist/*.tar.gz | grep -q 'opennec/src/matrix.c'
+          sudo apt-get update && sudo apt-get install -y libopenblas-dev liblapack-dev gfortran pkg-config
+          python3 -m venv /tmp/v && /tmp/v/bin/pip install --upgrade pip
+          /tmp/v/bin/pip install dist/*.tar.gz
+          cd /tmp && /tmp/v/bin/python -c "import pyopennec as p; print(p.__version__, p.BACKEND, p.OPENMP); assert p.BACKEND == 'openblas' and p.OPENMP"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: ./dist/*.tar.gz
+
+  test:
+    # The wheel as a user installs it: on the runner (not cibuildwheel's
+    # container), into 3.12 and 3.14, with nec2c where the OS packages it.
+    name: test ${{ matrix.os }} py${{ matrix.python }}
+    needs: build_wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: OS packages
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update && sudo apt-get install -y nec2c
+          else
+            brew install libomp
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}
+          path: wheelhouse
+      - name: Install the wheel
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install --upgrade pip
+          /tmp/v/bin/pip install wheelhouse/*.whl pytest
+      - name: Test
+        env:
+          PYOPENNEC_EXPECT_BACKEND: ${{ runner.os == 'Linux' && 'scipy-openblas32' || 'accelerate' }}
+          PYOPENNEC_EXPECT_OPENMP: "1"
+        run: |
+          /tmp/v/bin/python -c "import sys, pyopennec as p; print(sys.version); print(p.__version__, p.BACKEND, p.OPENMP, p.OPENNEC_VERSION)"
+          /tmp/v/bin/python -m pytest tests -p no:cacheprovider -ra
+
+  cross_engine:
+    # pyopennec + momwire + pynec-accel in ONE process, every import order,
+    # threaded (tools/cross_engine.py).  Latest of each from PyPI, the built
+    # pyopennec wheel, and no workaround env (no KMP_DUPLICATE_LIB_OK, no
+    # GLIBC_TUNABLES): green only when all three share one OpenMP runtime.
+    name: cross-engine ${{ matrix.os }} py${{ matrix.python }}
+    needs: build_wheels
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: libomp (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}
+          path: wheelhouse
+      - name: Install the three engines
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install --upgrade pip
+          /tmp/v/bin/pip install wheelhouse/*.whl momwire pynec-accel
+          /tmp/v/bin/pip list
+      - name: One process, three OpenMP engines
+        run: |
+          cd /tmp
+          /tmp/v/bin/python -I "$GITHUB_WORKSPACE/tools/cross_engine.py"
+
+  release:
+    name: GitHub Release
+    needs: [build_wheels, sdist, test, cross_engine]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "{wheel-*,sdist}"
+          path: dist
+          merge-multiple: true
+      - name: Create the release with the wheels and the sdist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l dist
+          gh release create "$TAG" dist/*.whl dist/*.tar.gz \
+            -R "$GITHUB_REPOSITORY" --verify-tag --title "pyopennec $TAG" --generate-notes
