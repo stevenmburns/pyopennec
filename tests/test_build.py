@@ -6,7 +6,7 @@ from pyopennec import _porty
 
 
 def test_version():
-    assert pyopennec.__version__ == "0.2.0.dev0"
+    assert pyopennec.__version__ == "0.2.0"
 
 
 def test_engine_reports_its_build():
