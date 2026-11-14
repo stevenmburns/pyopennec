@@ -104,7 +104,7 @@ attached to each [GitHub Release](https://github.com/stevenmburns/pyopennec/rele
 PyPI comes later.  Install one by URL,
 `https://github.com/stevenmburns/pyopennec/releases/download/v<ver>/<wheel>`:
 
-* **Linux x86_64** (glibc >= 2.28):
+* **Linux x86_64** (glibc >= 2.27):
   `pyopennec-<ver>-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl`.
   LAPACK is OpenBLAS from the scipy-openblas32 wheel, vendored.  OpenMP is
   the system's GCC runtime, `libgomp.so.1`, deliberately not vendored
