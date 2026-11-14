@@ -33,6 +33,9 @@ jobs:
           test "$(ls dist/*.whl | wc -l)" = 1
           ls dist/*.whl | grep -q -- '-cp312-abi3-'
       - name: Test on 3.12 (the wheel)
+        env:
+          PYOPENNEC_EXPECT_BACKEND: openblas
+          PYOPENNEC_EXPECT_OPENMP: "1"
         run: |
           .venv312/bin/pip install dist/*.whl pytest
           .venv312/bin/python -c "import pyopennec; print(pyopennec.__version__, pyopennec.BACKEND, pyopennec.OPENMP, pyopennec.OPENNEC_VERSION)"
@@ -40,6 +43,9 @@ jobs:
           # this imports the installed wheel
           .venv312/bin/python -m pytest -v -p no:cacheprovider
       - name: Test on 3.14 (the same wheel)
+        env:
+          PYOPENNEC_EXPECT_BACKEND: openblas
+          PYOPENNEC_EXPECT_OPENMP: "1"
         run: |
           python3.14 -m venv .venv314
           .venv314/bin/pip install dist/*.whl pytest
