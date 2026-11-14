@@ -44,12 +44,25 @@
 #include <stdint.h>
 #include <string.h>
 
-#if defined(HAVE_OPENBLAS) || defined(HAVE_BLAS) || defined(HAVE_MKL)
+#if defined(HAVE_ACCELERATE)
+/* Apple's Accelerate, through its own prototypes (ACCELERATE_NEW_LAPACK, the
+ * same header and macro OpenNEC's matrix.c is built with), so porty and the
+ * engine call the same LAPACK entry points. */
 #define PORTY_LAPACK 1
-/* The trailing size_t is gfortran's hidden length of the TRANS string. */
+#include <Accelerate/Accelerate.h>
+#define PORTY_ZGETRS(t, n, nrhs, a, lda, ip, b, ldb, info) \
+  zgetrs_(t, n, nrhs, a, lda, ip, b, ldb, info)
+#elif defined(HAVE_OPENBLAS) || defined(HAVE_BLAS) || defined(HAVE_MKL)
+#define PORTY_LAPACK 1
+/* The trailing size_t is gfortran's hidden length of the TRANS string.  A
+ * prefixed OpenBLAS (scipy-openblas32 exports scipy_zgetrf_) is reached by
+ * CMakeLists.txt defining zgetrf_ / zgetrs_ to the prefixed names, for this
+ * file and OpenNEC's alike. */
 extern void zgetrf_(int *, int *, double _Complex *, int *, int *, int *);
 extern void zgetrs_(char *, int *, int *, double _Complex *, int *, int *,
                     double _Complex *, int *, int *, size_t);
+#define PORTY_ZGETRS(t, n, nrhs, a, lda, ip, b, ldb, info) \
+  zgetrs_(t, n, nrhs, a, lda, ip, b, ldb, info, 1)
 #else
 #define PORTY_LAPACK 0
 #endif
@@ -457,7 +470,7 @@ static int engine_solve(context_t *ctx, int n, int nrhs, cplx *cm, int *ip, cplx
   (void)ctx;
   char trans = 'N';
   int info = 0;
-  zgetrs_(&trans, &n, &nrhs, cm, &n, ip, b, &n, &info, 1);
+  PORTY_ZGETRS(&trans, &n, &nrhs, cm, &n, ip, b, &n, &info);
   return info;
 #else
   for (int p = 0; p < nrhs; p++)
