@@ -20,9 +20,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
   ldflags=(-L"$omp/lib" -lomp -Wl,-rpath,"$omp/lib" -framework Accelerate)
 else
   cc="${CC:-gcc}"
-  # glibc declares input.c's strcasestr only under _GNU_SOURCE (an error, not
-  # a warning, from GCC 14 on)
-  cflags+=(-fopenmp -D_GNU_SOURCE)
+  cflags+=(-fopenmp)
   ldflags=(-fopenmp)
 fi
 if [[ "$(uname -s)" == Darwin ]]; then
@@ -42,7 +40,12 @@ for s in "${srcs[@]}"; do
   case "$(basename "$s")" in compat_time.c) continue ;; esac
   o="$out/obj/$(basename "${s%.c}").o"
   objs+=("$o")
-  "$cc" "${cflags[@]}" -c "$s" -o "$o" &
+  extra=()
+  # glibc declares input.c's strcasestr only under _GNU_SOURCE (an error from
+  # GCC 14 on); that file only, since _GNU_SOURCE also exposes glibc's
+  # error_t, which collides with OpenNEC's own where errno.h is included
+  if [[ "$(uname -s)" != Darwin && "$(basename "$s")" == input.c ]]; then extra=(-D_GNU_SOURCE); fi
+  "$cc" "${cflags[@]}" "${extra[@]}" -c "$s" -o "$o" &
   pids+=($!)
   # four compiles at a time: the laptop this was written on has OOM-killed
   # sessions under heavier parallel load
