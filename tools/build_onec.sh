@@ -45,7 +45,7 @@ for s in "${srcs[@]}"; do
   # GCC 14 on); that file only, since _GNU_SOURCE also exposes glibc's
   # error_t, which collides with OpenNEC's own where errno.h is included
   if [[ "$(uname -s)" != Darwin && "$(basename "$s")" == input.c ]]; then extra=(-D_GNU_SOURCE); fi
-  "$cc" "${cflags[@]}" "${extra[@]}" -c "$s" -o "$o" &
+  "$cc" "${cflags[@]}" ${extra[@]+"${extra[@]}"} -c "$s" -o "$o" &
   pids+=($!)
   # four compiles at a time: the laptop this was written on has OOM-killed
   # sessions under heavier parallel load
