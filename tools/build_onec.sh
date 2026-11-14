@@ -10,10 +10,22 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 src="$here/opennec/src"
 out="${1:-$here/build/onec}"
 mkdir -p "$out/obj"
-cc="${CC:-gcc}"
-cflags=(-I"$here/opennec" -I"$src" -O2 -fopenmp)
-ldflags=(-fopenmp)
-if pkg-config --exists openblas 2>/dev/null; then
+cflags=(-I"$here/opennec" -I"$src" -O2)
+if [[ "$(uname -s)" == Darwin ]]; then
+  # Apple clang has no OpenMP of its own: Homebrew's libomp, and Accelerate
+  # for LAPACK (OpenNEC's Makefile BACKEND=accelerate), as the macOS wheel
+  cc="${CC:-clang}"
+  omp="${LIBOMP_PREFIX:-$(brew --prefix libomp 2>/dev/null || echo /opt/homebrew/opt/libomp)}"
+  cflags+=(-Xpreprocessor -fopenmp -I"$omp/include" -DHAVE_ACCELERATE -DACCELERATE_NEW_LAPACK)
+  ldflags=(-L"$omp/lib" -lomp -Wl,-rpath,"$omp/lib" -framework Accelerate)
+else
+  cc="${CC:-gcc}"
+  cflags+=(-fopenmp)
+  ldflags=(-fopenmp)
+fi
+if [[ "$(uname -s)" == Darwin ]]; then
+  :
+elif pkg-config --exists openblas 2>/dev/null; then
   read -r -a ob_c <<<"$(pkg-config --cflags openblas)"
   read -r -a ob_l <<<"$(pkg-config --libs openblas)"
   cflags+=("${ob_c[@]}" -DHAVE_OPENBLAS)
