@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pyopennec"
-version = "0.2.0"
+version = "0.2.1"
 description = "OpenNEC (a C rewrite of NEC-2) behind an N-port admittance interface, one abi3 wheel"
 readme = "README.md"
 license = { text = "MIT" }
