@@ -309,6 +309,25 @@ static context_t *engine_build(const spec_t *s, char *err, size_t errlen)
              ctx->geometry.num_patches);
     goto done;
   }
+  /* Every built segment must have a finite, positive length and radius.
+   * The wire-level checks (finite fields, distinct ends, radius > 0) do not
+   * imply it: a wire whose length underflows when squared, or whose
+   * subdivision rounds a segment's ends together, gets a 0/0 = NaN length
+   * from OpenNEC's Newton square root, and NaN passes its own "too small"
+   * test (half_len <= 1e-20). Over Sommerfeld ground that NaN reaches
+   * romberg_integrate_sommerfeld's assert(s >= 0) and aborts the process;
+   * elsewhere it returns a NaN answer silently. The engine works in metres
+   * here, before any frequency scaling. */
+  for (int i = 0; i < ctx->geometry.num_segs; i++) {
+    double hl = ctx->geometry.half_len[i], rad = ctx->geometry.radius[i];
+    if (!(isfinite(hl) && hl > 0.0) || !(isfinite(rad) && rad > 0.0)) {
+      snprintf(err, errlen, "wires: tag %d, segment %d of the structure: its length (%g m) "
+               "and radius (%g m) must be finite and > 0; a wire this short, or this close "
+               "to its own segment count's rounding, cannot be segmented",
+               ctx->geometry.tag_nums[i], i + 1, hl, rad);
+      goto done;
+    }
+  }
 
   if (s->ground == GROUND_FREE) {
     ctx->gnd.has_ground = 1;
