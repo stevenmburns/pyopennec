@@ -15,7 +15,7 @@ from __future__ import annotations
 from . import porty
 from ._porty import BACKEND, OPENMP, OPENNEC_VERSION
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = ["BACKEND", "OPENMP", "OPENNEC_VERSION", "porty"]
 
