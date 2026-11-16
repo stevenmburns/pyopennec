@@ -54,7 +54,10 @@ def parse_deck(text):
             gpflag = int(v[0])
         elif card == "GN":
             kind = int(v[0])
-            ground = "perfect" if kind == 1 else (("reflection", "", "sommerfeld")[kind], v[4], v[5])
+            if kind == -1:  # GN -1 removes any ground: free space
+                ground = None
+            else:
+                ground = "perfect" if kind == 1 else (("reflection", "", "sommerfeld")[kind], v[4], v[5])
         elif card == "LD":
             loads.append((int(v[0]), int(v[1]), int(v[2]), int(v[3]), *(v[4:7] + [0.0] * (7 - len(v)))[:3]))
         elif card == "EK":
@@ -114,8 +117,14 @@ def input_impedance(y_ant, y_net):
 
 def test_golden_pins(golden, record_property):
     spec = json.loads((golden / "expected.json").read_text())
-    worst, n, skipped = 0.0, 0, []
+    worst, n, skipped, report_only = 0.0, 0, [], []
     for entry in spec["decks"]:
+        # Since OpenNEC 2.4, some entries pin a printed report (patterns,
+        # near fields, power budget) rather than impedance points. Those
+        # belong to OpenNEC's own golden runner, not to porty.
+        if "points" not in entry:
+            report_only.append(entry["deck"])
+            continue
         case = parse_deck((golden / "decks" / entry["deck"]).read_text())
         if case is None:
             skipped.append(entry["deck"])
@@ -135,8 +144,9 @@ def test_golden_pins(golden, record_property):
             n += 1
             assert r <= spec["tolerance"], (entry["deck"], z, zw, r)
     record_property("worst_rel_dZ", worst)
-    print(f"\nporty vs golden pins: {n} points over {len(spec['decks']) - len(skipped)} decks, "
-          f"worst |dZ|/|Z| = {worst:.2e} (tolerance {spec['tolerance']:.0e}); skipped {skipped}")
+    print(f"\nporty vs golden pins: {n} points over {len(spec['decks']) - len(skipped) - len(report_only)} decks, "
+          f"worst |dZ|/|Z| = {worst:.2e} (tolerance {spec['tolerance']:.0e}); skipped {skipped}; "
+          f"report-only {report_only}")
     # every deck in the matrix is one porty can state today; a new one that
     # is not must be looked at, not silently dropped
     assert skipped == []
