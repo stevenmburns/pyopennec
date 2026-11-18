@@ -1,0 +1,361 @@
+name: windows-mingw
+
+# MinGW-w64 (MSYS2 UCRT64) Windows builds, beside wheels.yml and ci.yml, which
+# this does not touch: on dispatch and on its own branch only.
+#
+#   openblas     the static OpenBLAS, both thread servers (cached)
+#   linux-ref    onec on Linux from the same submodule commit: the reference
+#   onec         onec.exe (generic, avx2) x (win32, omp): import gate, OpenNEC's
+#                golden and sequential suites, impedance against linux-ref,
+#                thread control, exit soak, indicative timing, the zip
+#   wheel        the cp312-abi3 wheel from MinGW, on python.org's CPython
+#   wheel-test   the package's test suite on 3.12, 3.13, 3.14
+#   coexist      beside momwire and pynec-accel, every import order; exit soak
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mingw-windows]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openblas:
+    name: openblas ${{ matrix.blas }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        blas: [win32, omp]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ob
+          key: openblas-ucrt64-${{ matrix.blas }}-${{ hashFiles('tools/windows/build_openblas.sh') }}
+      - uses: msys2/setup-msys2@v2
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            git make perl
+            mingw-w64-ucrt-x86_64-gcc
+      - name: Build
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          gcc --version | head -1
+          tools/windows/build_openblas.sh "$PWD/ob" ${{ matrix.blas }}
+          rm -rf ob/src ob/build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openblas-${{ matrix.blas }}
+          path: ob
+          retention-days: 7
+
+  linux-ref:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build onec
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev liblapack-dev gfortran pkg-config
+          bash tools/build_onec.sh build/onec
+      - name: Run the decks
+        run: |
+          python -m pip install -q psutil
+          python tools/windows/make_decks.py decks
+          python tools/windows/onec_gate.py run --exe build/onec/onec --decks decks --out ref
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-ref
+          path: ref
+          retention-days: 7
+
+  onec:
+    needs: [openblas, linux-ref]
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openblas-*
+          path: ob
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-ref
+          path: ref
+      - name: Build the four onec.exe
+        shell: msys2 {0}
+        run: |
+          set -e
+          gcc --version | head -1
+          for blas in win32 omp; do
+            for arch in generic avx2; do
+              tools/windows/build_onec.sh "b/$blas-$arch" "ob/openblas-$blas/libopenblas.a" "$arch"
+            done
+          done
+      - name: Import tables
+        shell: pwsh
+        run: |
+          python -m pip install -q pefile psutil
+          foreach ($b in 'win32-generic','win32-avx2','omp-generic','omp-avx2') {
+            python tools/windows/pe_gate.py exe "b/$b/onec.exe"
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: A run from a System32-only PATH
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\System32"
+          foreach ($b in 'win32-generic','win32-avx2','omp-generic','omp-avx2') {
+            & "b/$b/onec.exe" -v
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: OpenNEC's own suites
+        shell: pwsh
+        run: |
+          foreach ($b in 'win32-generic','win32-avx2','omp-generic','omp-avx2') {
+            "== $b"
+            $exe = (Resolve-Path "b/$b/onec.exe").Path
+            python opennec/tests/golden_tests/run_golden.py --onec $exe --decks opennec/tests/golden_tests/decks --expected opennec/tests/golden_tests/expected.json
+            if ($LASTEXITCODE) { exit 1 }
+            python opennec/tests/sequential_execution/run_sequential_execution_tests.py --onec $exe
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: Impedance against the Linux build, and timing (indicative)
+        shell: pwsh
+        run: |
+          python tools/windows/make_decks.py decks
+          foreach ($b in 'win32-generic','win32-avx2','omp-generic','omp-avx2') {
+            "== $b"
+            python tools/windows/onec_gate.py run --exe "b/$b/onec.exe" --decks decks --out "out/$b"
+            if ($LASTEXITCODE) { exit 1 }
+            python tools/windows/onec_gate.py compare ref "out/$b"
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: Timing, interleaved on one runner (indicative only)
+        shell: pwsh
+        run: |
+          foreach ($round in 1,2) {
+            foreach ($b in 'win32-generic','win32-avx2','omp-generic','omp-avx2') {
+              "== round $round $b"
+              python tools/windows/onec_gate.py run --exe "b/$b/onec.exe" --decks decks --out "time/$round-$b" --only "synth_cage.nec,synth_lpy.nec"
+              if ($LASTEXITCODE) { exit 1 }
+            }
+          }
+      - name: Thread control
+        shell: pwsh
+        run: |
+          foreach ($b in 'win32-generic','omp-generic') {
+            "== $b"
+            python tools/windows/onec_gate.py threads --exe "b/$b/onec.exe" --deck decks/synth_lpy.nec
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: Exit soak
+        shell: pwsh
+        run: |
+          foreach ($b in 'win32-generic','omp-generic') {
+            "== $b"
+            python tools/windows/onec_gate.py soak --exe "b/$b/onec.exe" --deck decks/example5.nec --runs 1500
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: The zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force zip | Out-Null
+          Copy-Item b/win32-generic/onec.exe zip/onec.exe
+          Copy-Item b/win32-avx2/onec.exe zip/onec-avx2.exe
+          Copy-Item opennec/LICENSE zip/LICENSE.OpenNEC.txt
+          Copy-Item tools/windows/THIRD-PARTY-NOTICES.txt, tools/windows/README-onec.txt zip/
+          Rename-Item zip/README-onec.txt README.txt
+          $c = git -C opennec rev-parse HEAD
+          "OpenNEC $c`npyopennec ${{ github.sha }}`nOpenBLAS v0.3.34, Win32 thread server, DYNAMIC_ARCH (PRESCOTT NEHALEM SANDYBRIDGE HASWELL)`nMSYS2 UCRT64 gcc" | Set-Content zip/BUILD-INFO.txt
+          Get-ChildItem zip | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onec-windows-x64-mingw
+          path: zip
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onec-all-builds
+          path: |
+            b/*/onec.exe
+            out/*/times.json
+            time/*/times.json
+          retention-days: 7
+
+  wheel:
+    name: wheel ${{ matrix.blas }}
+    needs: openblas
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        blas: [win32, omp]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ninja
+      - uses: actions/download-artifact@v4
+        with:
+          name: openblas-${{ matrix.blas }}
+          path: ob
+      - name: Build the wheel with MinGW, for python.org's CPython
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin;$env:PATH"
+          $env:CC = "gcc"
+          $env:CMAKE_GENERATOR = "Ninja"
+          $lib = ((Resolve-Path ob/libopenblas.a).Path) -replace '\\','/'
+          python -c "import sys; print(sys.version)"
+          python -m pip install -q --upgrade pip
+          python -m pip wheel . --no-deps -w dist -v `
+            -Ccmake.define.PYOPENNEC_BLAS=static-openblas `
+            "-Ccmake.define.PYOPENNEC_OPENBLAS_LIB=$lib" `
+            -Ccmake.define.PYOPENNEC_REQUIRE_OPENMP=ON
+          if ($LASTEXITCODE) { exit 1 }
+          Get-ChildItem dist | Format-Table Name, Length
+      - name: The wheel's contents, imports and exports
+        shell: pwsh
+        run: |
+          python -m pip install -q pefile
+          $whl = (Get-ChildItem dist/*.whl).FullName
+          if ($whl -notmatch 'cp312-abi3-win_amd64') { throw "wrong tag: $whl" }
+          python -m zipfile -l $whl
+          python -m zipfile -e $whl x
+          python tools/windows/pe_gate.py pyd x/pyopennec/_porty.pyd
+          if ($LASTEXITCODE) { exit 1 }
+          if (-not (Test-Path x/pyopennec/THIRD-PARTY-NOTICES.txt)) { throw "no notices in the wheel" }
+          if (Get-ChildItem -Recurse x -Include *.dll) { throw "the wheel vendors a DLL" }
+      - name: onec for the suite's CLI cross-checks
+        shell: msys2 {0}
+        run: tools/windows/build_onec.sh onec-test ob/libopenblas.a generic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onec-test-${{ matrix.blas }}
+          path: onec-test/onec.exe
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-windows-mingw-${{ matrix.blas }}
+          path: dist/*.whl
+          retention-days: 30
+
+  wheel-test:
+    name: test ${{ matrix.blas }} py${{ matrix.python }}
+    needs: wheel
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        blas: [win32, omp]
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-windows-mingw-${{ matrix.blas }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: onec-test-${{ matrix.blas }}
+          path: onecdir
+      - name: Install and test the wheel
+        shell: pwsh
+        env:
+          PYOPENNEC_EXPECT_BACKEND: static-openblas
+          PYOPENNEC_EXPECT_OPENMP: "1"
+          OMP_NUM_THREADS: "4"
+        run: |
+          python -m venv v
+          v\Scripts\python -m pip install -q --upgrade pip
+          v\Scripts\python -m pip install -q (Get-ChildItem dist/*.whl).FullName pytest
+          v\Scripts\python -c "import sys, pyopennec as p; print(sys.version); print(p.__version__, p.BACKEND, p.OPENMP, p.OPENNEC_VERSION, p._porty.__file__)"
+          if ($LASTEXITCODE) { exit 1 }
+          $env:PYOPENNEC_ONEC = (Resolve-Path onecdir/onec.exe).Path
+          v\Scripts\python -m pytest tests -p no:cacheprovider -ra
+          exit $LASTEXITCODE
+
+  coexist:
+    name: coexist ${{ matrix.blas }} py${{ matrix.python }}
+    needs: wheel
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        blas: [win32, omp]
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-windows-mingw-${{ matrix.blas }}
+          path: dist
+      - name: Install the three engines
+        shell: pwsh
+        run: |
+          python -m venv v
+          v\Scripts\python -m pip install -q --upgrade pip
+          v\Scripts\python -m pip install -q (Get-ChildItem dist/*.whl).FullName momwire pynec-accel scipy
+          v\Scripts\python -m pip list
+      - name: One process, every import order
+        shell: pwsh
+        run: |
+          v\Scripts\python tools/windows/coexist.py
+          exit $LASTEXITCODE
+      - name: Exit soak (fresh processes)
+        shell: pwsh
+        run: |
+          v\Scripts\python tools/windows/coexist.py --soak 300
+          exit $LASTEXITCODE

@@ -63,11 +63,14 @@ endif()
 #   scipy-openblas32  the scipy-openblas32 PyPI wheel's libscipy_openblas
 #                   (SCIPY_OPENBLAS32_DIR = its package dir, else imported
 #                   from the build interpreter)
+#   static-openblas a static libopenblas.a named by PYOPENNEC_OPENBLAS_LIB, linked
+#                   into the extension (the MinGW Windows wheel,
+#                   tools/windows/build_openblas.sh)
 #   accelerate      Apple's Accelerate framework (new LAPACK interface)
 #   original        OpenNEC's own LU, no LAPACK (far slower)
 # Any explicit value other than `original` is a hard requirement: if it cannot
 # be satisfied the configure fails, so a wheel never ships the fallback.
-set(PYOPENNEC_BLAS "auto" CACHE STRING "auto|openblas|scipy-openblas32|accelerate|original")
+set(PYOPENNEC_BLAS "auto" CACHE STRING "auto|openblas|scipy-openblas32|static-openblas|accelerate|original")
 set(_blas ${PYOPENNEC_BLAS})
 if(_blas STREQUAL "auto")
   find_package(PkgConfig)
@@ -121,6 +124,13 @@ elseif(_blas STREQUAL "scipy-openblas32")
   # symbols either calls (matrix.c factor_matrix / solve, porty.c
   # engine_factor / engine_solve).
   set(PYOPENNEC_LAPACK_DEFS HAVE_OPENBLAS zgetrf_=scipy_zgetrf_ zgetrs_=scipy_zgetrs_)
+elseif(_blas STREQUAL "static-openblas")
+  if(NOT EXISTS "${PYOPENNEC_OPENBLAS_LIB}")
+    message(FATAL_ERROR "pyopennec: PYOPENNEC_BLAS=static-openblas needs "
+      "PYOPENNEC_OPENBLAS_LIB, the path of a static libopenblas.a")
+  endif()
+  target_link_libraries(opennec_core PUBLIC "${PYOPENNEC_OPENBLAS_LIB}")
+  set(PYOPENNEC_LAPACK_DEFS HAVE_OPENBLAS)
 elseif(_blas STREQUAL "accelerate")
   if(NOT APPLE)
     message(FATAL_ERROR "pyopennec: PYOPENNEC_BLAS=accelerate is macOS only")
@@ -153,4 +163,12 @@ target_compile_definitions(_porty PRIVATE ${PYOPENNEC_LAPACK_DEFS}
   PYOPENNEC_BACKEND="${PYOPENNEC_BACKEND}"
   PYOPENNEC_OPENMP=$<BOOL:${OpenMP_C_FOUND}>)
 target_compile_options(_porty PRIVATE -Wall -Wextra -Wno-unused-parameter)
+# MinGW: every runtime is linked into the .pyd (libgomp, winpthreads, libgcc),
+# and nothing but PyInit__porty is exported, so no OpenBLAS or libgomp symbol is
+# visible to the rest of the process.  The notices of what is linked in travel
+# with it.
+if(MINGW)
+  target_link_options(_porty PRIVATE -static -Wl,--exclude-all-symbols)
+  install(FILES tools/windows/THIRD-PARTY-NOTICES.txt DESTINATION pyopennec)
+endif()
 install(TARGETS _porty DESTINATION pyopennec)

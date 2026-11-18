@@ -11,7 +11,7 @@ def test_version():
 
 def test_engine_reports_its_build():
     assert pyopennec.OPENNEC_VERSION.count(".") == 2
-    assert pyopennec.BACKEND in ("openblas", "scipy-openblas32", "accelerate", "original")
+    assert pyopennec.BACKEND in ("openblas", "scipy-openblas32", "static-openblas", "accelerate", "original")
     assert isinstance(pyopennec.OPENMP, bool)
     assert _porty.LAPACK_DIRECT == (pyopennec.BACKEND != "original")
 
@@ -30,6 +30,8 @@ def test_expected_build():
 def test_one_abi3_extension():
     """The only compiled module is _porty, built on the 3.12 Limited API."""
     assert _porty.LIMITED_API == 0x030C0000
-    assert _porty.__file__.endswith(".abi3.so")
+    # Windows has no abi3 filename tag: the stable ABI is in the wheel's tag and
+    # in the module's import of python3.dll
+    assert _porty.__file__.endswith(".pyd" if sys.platform == "win32" else ".abi3.so")
     assert "pyopennec._core" not in sys.modules
     assert pyopennec.porty.Structure is not None
