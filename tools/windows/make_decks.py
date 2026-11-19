@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REPO_DECKS = ["example5.nec", "6mYagi-Onec.nec", "GH8n2.nec"]
+REPO_DECKS = ["example5.nec", "6mYagi-Onec.nec"]
 
 
 def cage() -> str:

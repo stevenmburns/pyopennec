@@ -48,6 +48,7 @@ jobs:
           install: >-
             git make perl
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libgomp
       - name: Build
         if: steps.cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
@@ -104,6 +105,7 @@ jobs:
           update: false
           install: >-
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libgomp
       - uses: actions/download-artifact@v4
         with:
           pattern: openblas-*
@@ -236,6 +238,7 @@ jobs:
           update: false
           install: >-
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-libgomp
             mingw-w64-ucrt-x86_64-ninja
       - uses: actions/download-artifact@v4
         with:
