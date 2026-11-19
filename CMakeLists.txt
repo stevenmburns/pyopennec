@@ -48,7 +48,12 @@ endif()
 # shares one libomp image (see pyproject.toml's cibuildwheel sections).
 option(PYOPENNEC_REQUIRE_OPENMP "fail the build when OpenMP is not found" OFF)
 find_package(OpenMP COMPONENTS C)
-if(OpenMP_C_FOUND)
+if(OpenMP_C_FOUND AND MINGW)
+  # FindOpenMP names libgomp.dll.a by its full path, which -static cannot turn
+  # into the archive: the bare flag lets the _porty link below take libgomp.a
+  target_compile_options(opennec_core PUBLIC -fopenmp)
+  target_link_options(opennec_core PUBLIC -fopenmp)
+elseif(OpenMP_C_FOUND)
   target_link_libraries(opennec_core PUBLIC OpenMP::OpenMP_C)
 elseif(PYOPENNEC_REQUIRE_OPENMP)
   message(FATAL_ERROR "pyopennec: OpenMP not found and PYOPENNEC_REQUIRE_OPENMP=ON "
