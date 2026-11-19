@@ -155,6 +155,8 @@ jobs:
         shell: pwsh
         run: |
           python tools/windows/make_decks.py decks
+          python tools/windows/onec_gate.py control ref
+          if ($LASTEXITCODE) { exit 1 }
           foreach ($b in 'win32-generic','win32-avx2','omp-generic','omp-avx2') {
             "== $b"
             python tools/windows/onec_gate.py run --exe "b/$b/onec.exe" --decks decks --out "out/$b"
@@ -211,6 +213,7 @@ jobs:
           name: onec-all-builds
           path: |
             b/*/onec.exe
+            out/*/*.out
             out/*/times.json
             time/*/times.json
           retention-days: 7
@@ -324,6 +327,8 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           $env:PYOPENNEC_ONEC = (Resolve-Path onecdir/onec.exe).Path
           v\Scripts\python -m pytest tests -p no:cacheprovider -ra
+          if ($LASTEXITCODE) { exit 1 }
+          v\Scripts\python tools/windows/large_solve.py $env:PYOPENNEC_ONEC
           exit $LASTEXITCODE
 
   coexist:
@@ -360,5 +365,5 @@ jobs:
       - name: Exit soak (fresh processes)
         shell: pwsh
         run: |
-          v\Scripts\python tools/windows/coexist.py --soak 300
+          v\Scripts\python tools/windows/coexist.py --soak 1000
           exit $LASTEXITCODE
