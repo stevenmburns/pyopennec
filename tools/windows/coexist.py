@@ -118,6 +118,9 @@ class THREADENTRY32(ctypes.Structure):
 def thread_count() -> int:
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    k32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
     snap = k32.CreateToolhelp32Snapshot(4, 0)  # TH32CS_SNAPTHREAD
     e = THREADENTRY32()
     e.dwSize = ctypes.sizeof(e)
@@ -135,6 +138,14 @@ def runtime_modules() -> list[str]:
     psapi = ctypes.WinDLL("psapi", use_last_error=True)
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.GetCurrentProcess.restype = wintypes.HANDLE
+    # the pseudo-handle is -1: without argtypes ctypes cannot pass it
+    psapi.EnumProcessModules.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HMODULE),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    psapi.GetModuleFileNameExW.argtypes = [wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
     h = k32.GetCurrentProcess()
     mods = (wintypes.HMODULE * 4096)()
     need = wintypes.DWORD()
