@@ -278,7 +278,17 @@ def drive(rounds: int, timeout: float) -> int:
         if rc != 0:
             print(f"FAIL concurrent {name}: rc={rc} after {wall:.0f} s", flush=True)
             failed += 1
-    print(f"{len(orders) + 4 + 2 - failed}/{len(orders) + 4 + 2} runs passed", flush=True)
+    # a long interleaving: every engine's pool sleeps and wakes many times
+    name = ",".join(ENGINES)
+    rc, o, wall = spawn(["--child", name, "--rounds", "150"], timeout)
+    line = next((ln for ln in o.splitlines() if ln.startswith("COEXIST ")), None)
+    if rc != 0 or line is None:
+        print(f"FAIL 150 interleaved rounds: rc={rc} after {wall:.0f} s\n{o[-3000:]}", flush=True)
+        failed += 1
+    else:
+        print(f"ok   150 interleaved rounds of {name} in {wall:.0f} s", flush=True)
+    total = len(orders) + 4 + 2 + 1
+    print(f"{total - failed}/{total} runs passed", flush=True)
     return 1 if failed else 0
 
 
@@ -316,9 +326,13 @@ def main() -> int:
     if a.soak_child:
         for e in a.soak_child.split(","):
             importlib.import_module(MODULES[e])
+        # the larger solves: the pools must be up when the process exits, which
+        # a 51-segment dipole does not guarantee
         for e in a.soak_child.split(","):
-            cross_engine.RUNNERS[e]()
-        print("SOAK-OK", flush=True)
+            HEAVY[e]()
+        n = thread_count()
+        assert n > THREADS, f"only {n} threads alive at exit: the pools never started"
+        print(f"SOAK-OK threads={n}", flush=True)
         return 0
     if a.soak:
         return soak(a.soak, 120.0)

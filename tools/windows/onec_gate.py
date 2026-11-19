@@ -2,11 +2,12 @@
 
     onec_gate.py run --exe onec.exe --decks DIR --out DIR [--threads 4] [--only a.nec,b.nec]
     onec_gate.py compare REF_DIR TEST_DIR
+    onec_gate.py control REF_DIR
     onec_gate.py threads --exe onec.exe --deck a.nec
     onec_gate.py soak --exe onec.exe --deck a.nec --runs 2000
 
 `compare` reads every ANTENNA INPUT PARAMETERS row of every report in REF_DIR.
-Reports print five significant figures, so two correct engines can differ by
+Reports print six significant figures (%12.5E), so two correct engines can differ by
 one unit in the last printed digit from rounding alone: the gate is one such
 unit (with a margin for the rounding of the two sides) on R and on X.
 """
@@ -17,8 +18,11 @@ import argparse
 import json
 import math
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -91,7 +95,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 
 def last_digit_unit(v: float) -> float:
-    return 10.0 ** (math.floor(math.log10(abs(v))) - 4) if v else 1e-300
+    return 10.0 ** (math.floor(math.log10(abs(v))) - 5) if v else 1e-300
 
 
 def cmd_compare(a: argparse.Namespace) -> int:
@@ -123,6 +127,32 @@ def cmd_compare(a: argparse.Namespace) -> int:
         print(f"{f.name:40s} {len(ra):4d} rows  max |dZ|/|Z| {here:.2e}")
     print(f"{rows} impedance rows, {bad} outside one printed digit, worst |dZ|/|Z| {worst:.2e}")
     return 1 if bad or not rows else 0
+
+
+def cmd_control(a: argparse.Namespace) -> int:
+    """The negative control: `compare` must fail on a report whose impedance
+    moved by two units in the last printed digit, and pass on an exact copy."""
+    ref = Path(a.ref)
+    victim = max(ref.glob("*.out"), key=lambda f: len(nec_output.input_parameters(f.read_text(errors="replace"))))
+    text = victim.read_text(errors="replace")
+    z = nec_output.input_parameters(text)[0][5].real
+    old = f"{z:.5E}"
+    if old not in text:
+        print(f"control: {old} is not printed in {victim.name}")
+        return 1
+    moved = f"{z + 2 * last_digit_unit(z):.5E}"
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t)
+        (d / "ref").mkdir()
+        (d / "same").mkdir()
+        (d / "moved").mkdir()
+        shutil.copy(victim, d / "ref" / victim.name)
+        shutil.copy(victim, d / "same" / victim.name)
+        (d / "moved" / victim.name).write_text(re.sub(re.escape(old), moved, text, count=0))
+        same = cmd_compare(argparse.Namespace(ref=d / "ref", test=d / "same"))
+        caught = cmd_compare(argparse.Namespace(ref=d / "ref", test=d / "moved"))
+    print(f"control on {victim.name}: exact copy rc={same}, {old} moved to {moved} rc={caught}")
+    return 0 if same == 0 and caught == 1 else 1
 
 
 def cmd_threads(a: argparse.Namespace) -> int:
@@ -186,6 +216,8 @@ def main() -> int:
     c = sub.add_parser("compare")
     c.add_argument("ref")
     c.add_argument("test")
+    n = sub.add_parser("control")
+    n.add_argument("ref")
     t = sub.add_parser("threads")
     t.add_argument("--exe", required=True)
     t.add_argument("--deck", required=True)
@@ -196,7 +228,7 @@ def main() -> int:
     s.add_argument("--runs", type=int, default=2000)
     s.add_argument("--timeout", type=float, default=60)
     a = ap.parse_args()
-    return {"run": cmd_run, "compare": cmd_compare, "threads": cmd_threads, "soak": cmd_soak}[a.cmd](a)
+    return {"run": cmd_run, "compare": cmd_compare, "control": cmd_control, "threads": cmd_threads, "soak": cmd_soak}[a.cmd](a)
 
 
 if __name__ == "__main__":
