@@ -21,8 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   openblas:
@@ -254,9 +254,9 @@ jobs:
           python -c "import sys; print(sys.version)"
           python -m pip install -q --upgrade pip
           python -m pip wheel . --no-deps -w dist -v `
-            -Ccmake.define.PYOPENNEC_BLAS=static-openblas `
-            "-Ccmake.define.PYOPENNEC_OPENBLAS_LIB=$lib" `
-            -Ccmake.define.PYOPENNEC_REQUIRE_OPENMP=ON
+            "--config-settings=cmake.define.PYOPENNEC_BLAS=static-openblas" `
+            "--config-settings=cmake.define.PYOPENNEC_OPENBLAS_LIB=$lib" `
+            "--config-settings=cmake.define.PYOPENNEC_REQUIRE_OPENMP=ON"
           if ($LASTEXITCODE) { exit 1 }
           Get-ChildItem dist | Format-Table Name, Length
       - name: The wheel's contents, imports and exports
