@@ -66,10 +66,17 @@ class Structure:
     ground: None (free space), "perfect", ("reflection", epsr, sigma) for
     GN 0 or ("sommerfeld", epsr, sigma) for GN 2.  A ground also sets the
     GE ground-plane flag, so wire ends on z = 0 connect to their image.
+    fill_reuse: None leaves it to ``OPENNEC_FILL_REUSE`` and then the build
+    (on wherever OpenMP meets OpenBLAS or Accelerate); True or False sets it
+    for this structure's solves alone, whatever the environment says.
     """
 
-    def __init__(self, wires, *, ports, ground: GroundSpec = None, loads=(), extended_kernel: bool = False):
+    def __init__(self, wires, *, ports, ground: GroundSpec = None, loads=(), extended_kernel: bool = False,
+                 fill_reuse: Optional[bool] = None):
+        if fill_reuse is not None and not isinstance(fill_reuse, bool):
+            raise TypeError(f"fill_reuse: None, True or False, got {fill_reuse!r}")
         self._c = _porty.Structure(wires, ports, loads, extended_kernel=bool(extended_kernel),
+                                   fill_reuse=0 if fill_reuse is None else (1 if fill_reuse else -1),
                                    **_ground_args(ground))
 
     @property

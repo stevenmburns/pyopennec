@@ -96,8 +96,11 @@ say which build you have.
 **Fill reuse.** From OpenNEC 2.4.2, a build with OpenMP and OpenBLAS or
 Accelerate (every wheel) fills each repeated wire-pair geometry once and
 copies it. The answers move by about 1e-10 relative at most (pairs match
-on quantised geometry), far below a printed digit. Set
-`OPENNEC_FILL_REUSE=0` in the environment for the plain fill.
+on quantised geometry), far below a printed digit.
+`Structure(..., fill_reuse=False)` turns it off for that structure's solves
+alone (`True` turns it on); `None`, the default, leaves it to
+`OPENNEC_FILL_REUSE` and then the build. Prefer the argument in a program
+that solves several structures at once: the environment is process-wide.
 
 Why not PyNEC's card-by-card API: a circuit solver wants the port
 admittances and nothing else, and an interface of its own keeps pyopennec
