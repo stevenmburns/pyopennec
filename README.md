@@ -93,6 +93,12 @@ current-source excitation, NT / TL (do them on `Y`), GN 3 and NGF files.
 `"scipy-openblas32"`, `"accelerate"` or `"original"`) and `pyopennec.OPENMP`
 say which build you have.
 
+**Fill reuse.** From OpenNEC 2.4.2, a build with OpenMP and OpenBLAS or
+Accelerate (every wheel) fills each repeated wire-pair geometry once and
+copies it. The answers move by about 1e-10 relative at most (pairs match
+on quantised geometry), far below a printed digit. Set
+`OPENNEC_FILL_REUSE=0` in the environment for the plain fill.
+
 Why not PyNEC's card-by-card API: a circuit solver wants the port
 admittances and nothing else, and an interface of its own keeps pyopennec
 free of anything derived from PyNEC (GPL).
