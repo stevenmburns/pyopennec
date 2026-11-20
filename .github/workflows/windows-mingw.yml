@@ -1,7 +1,7 @@
 name: windows-mingw
 
 # MinGW-w64 (MSYS2 UCRT64) Windows builds, beside wheels.yml and ci.yml, which
-# this does not touch: on dispatch and on its own branch only.
+# this does not touch: on dispatch, on its own branches, and on v* tags.
 #
 #   openblas     the static OpenBLAS, both thread servers (cached)
 #   linux-ref    onec on Linux from the same submodule commit: the reference
@@ -12,10 +12,24 @@ name: windows-mingw
 #   wheel-test   the package's test suite on 3.12, 3.13, 3.14
 #   coexist      beside momwire and pynec-accel, every import order; exit soak
 
+#   release      on a v* tag only: attach onec-windows-x64.zip to the release
+#                wheels.yml creates
+#
+# Signing, one mode per run: the real Azure Artifact Signing certificate on a
+# v* tag or an azure_sign dispatch, a self-signed rehearsal on every other
+# run. The four builds are signed right after they are built, so every gate
+# below runs the signed bytes; no CI path ships an unsigned onec.exe.
+
 on:
   workflow_dispatch:
+    inputs:
+      azure_sign:
+        description: "Sign with the REAL Azure certificate (no tag, no release)"
+        type: boolean
+        default: false
   push:
-    branches: [mingw-windows]
+    branches: [mingw-windows, mingw-windows-release]
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -124,6 +138,93 @@ jobs:
               tools/windows/build_onec.sh "b/$blas-$arch" "ob/openblas-$blas/libopenblas.a" "$arch"
             done
           done
+      - name: Decide the signing mode
+        shell: pwsh
+        env:
+          AZURE_SIGN: ${{ inputs.azure_sign }}
+        run: |
+          $mode = if ($env:GITHUB_REF_TYPE -eq 'tag' -or $env:AZURE_SIGN -eq 'true') { 'azure' } else { 'rehearsal' }
+          "ONEC_SIGN_MODE=$mode" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "signing mode: $mode"
+      - name: Rehearsal certificate (self-signed, never on tags)
+        if: env.ONEC_SIGN_MODE == 'rehearsal'
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=onec rehearsal (NOT a release certificate)" -CertStoreLocation Cert:\CurrentUser\My
+          "ONEC_SIGN_SHA1=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      # The Azure stanza is momwire's (standalone.yml): the same account and
+      # profile, the dlib on the .NET 8 runtime, and nuget.exe rather than
+      # actions/setup-dotnet, whose installer host has answered HTTP 409 since
+      # 2026-10-25.
+      - name: .NET 8 runtime (azure mode)
+        if: env.ONEC_SIGN_MODE == 'azure'
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $have = @(& dotnet --list-runtimes 2>$null) -match '^Microsoft\.NETCore\.App 8\.'
+          if ($have) { $have; exit 0 }
+          $dir = Join-Path $env:RUNNER_TEMP 'dotnet'
+          $script = Join-Path $env:RUNNER_TEMP 'dotnet-install.ps1'
+          Invoke-WebRequest -Uri https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.ps1 -OutFile $script
+          & $script -Channel 8.0 -Runtime dotnet -InstallDir $dir -AzureFeed https://builds.dotnet.microsoft.com/dotnet
+          if (-not (Test-Path (Join-Path $dir 'dotnet.exe'))) { throw ".NET 8 runtime did not install to $dir" }
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "DOTNET_ROOT=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Artifact Signing dlib and metadata (azure mode)
+        if: env.ONEC_SIGN_MODE == 'azure'
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -OutFile nuget.exe
+          & ./nuget.exe install Microsoft.ArtifactSigning.Client -Version 1.0.128 -x -OutputDirectory packages
+          $dlib = Get-ChildItem packages -Recurse -Filter Azure.CodeSigning.Dlib.dll |
+                  Where-Object { $_.Directory.Name -eq 'x64' } | Select-Object -First 1
+          if (-not $dlib) { throw "x64 Azure.CodeSigning.Dlib.dll not found in Microsoft.ArtifactSigning.Client" }
+          $meta = [ordered]@{
+            Endpoint               = "https://wus2.codesigning.azure.net"
+            CodeSigningAccountName = "momwire"
+            CertificateProfileName = "momwire-public-trust"
+            ExcludeCredentials     = @(
+              "ManagedIdentityCredential", "WorkloadIdentityCredential",
+              "SharedTokenCacheCredential", "VisualStudioCredential",
+              "VisualStudioCodeCredential", "AzureCliCredential",
+              "AzurePowerShellCredential", "AzureDeveloperCliCredential",
+              "InteractiveBrowserCredential")
+          }
+          $meta | ConvertTo-Json | Out-File metadata.json -Encoding utf8
+          "ONEC_SIGN_DLIB=$($dlib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ONEC_SIGN_METADATA=$((Resolve-Path metadata.json).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      # One signtool invocation for the four builds, timestamped. In azure
+      # mode the chain must verify and every file must carry a timestamp; the
+      # rehearsal's self-signed root cannot chain, so it checks attachment only.
+      - name: Sign the four onec.exe
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ env.ONEC_SIGN_MODE == 'azure' && secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ env.ONEC_SIGN_MODE == 'azure' && secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ env.ONEC_SIGN_MODE == 'azure' && secrets.AZURE_CLIENT_SECRET || '' }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+                      Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+          if (-not $signtool) { throw "signtool.exe not found in the Windows Kits" }
+          $exes = 'win32-generic','win32-avx2','omp-generic','omp-avx2' | ForEach-Object { (Resolve-Path "b/$_/onec.exe").Path }
+          if ($env:ONEC_SIGN_MODE -eq 'azure') {
+            if (-not $env:AZURE_CLIENT_SECRET) { throw "azure mode without the AZURE_* secrets on this repository" }
+            $id = @('/dlib', $env:ONEC_SIGN_DLIB, '/dmdf', $env:ONEC_SIGN_METADATA)
+          } else {
+            $id = @('/sha1', $env:ONEC_SIGN_SHA1)
+          }
+          & $signtool.FullName sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 @id @exes
+          if ($LASTEXITCODE) { throw "signtool sign failed" }
+          foreach ($e in $exes) {
+            $s = Get-AuthenticodeSignature $e
+            "$e : $($s.Status) $($s.SignerCertificate.Subject)"
+            if (-not $s.SignerCertificate) { throw "$e is not signed" }
+            if (-not $s.TimeStamperCertificate) { throw "$e carries no timestamp" }
+            if ($env:ONEC_SIGN_MODE -eq 'azure' -and $s.Status -ne 'Valid') { throw "$e : $($s.Status)" }
+          }
       - name: Import tables
         shell: pwsh
         run: |
@@ -197,15 +298,27 @@ jobs:
           Copy-Item b/win32-generic/onec.exe zip/onec.exe
           Copy-Item b/win32-avx2/onec.exe zip/onec-avx2.exe
           Copy-Item opennec/LICENSE zip/LICENSE.OpenNEC.txt
+          Copy-Item LICENSE zip/LICENSE.pyopennec.txt
           Copy-Item tools/windows/THIRD-PARTY-NOTICES.txt, tools/windows/README-onec.txt zip/
           Rename-Item zip/README-onec.txt README.txt
           $c = git -C opennec rev-parse HEAD
           "OpenNEC $c`npyopennec ${{ github.sha }}`nOpenBLAS v0.3.34, Win32 thread server, DYNAMIC_ARCH (PRESCOTT NEHALEM SANDYBRIDGE HASWELL)`nMSYS2 UCRT64 gcc" | Set-Content zip/BUILD-INFO.txt
           Get-ChildItem zip | Format-Table Name, Length
+      - name: Zip it (a rehearsal or SIGNTEST name unless this is the release)
+        shell: pwsh
+        run: |
+          $stem = 'onec-windows-x64'
+          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $stem }
+                  elseif ($env:ONEC_SIGN_MODE -eq 'azure') { "$stem-SIGNTEST" }
+                  else { "$stem-SELFSIGNED-rehearsal" }
+          Compress-Archive -Path zip/* -DestinationPath "$name.zip"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Move-Item "$name.zip" dist/
+          Get-ChildItem dist | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
           name: onec-windows-x64-mingw
-          path: zip
+          path: dist
           retention-days: 30
       - uses: actions/upload-artifact@v4
         if: always()
@@ -367,3 +480,31 @@ jobs:
         run: |
           v\Scripts\python tools/windows/coexist.py --soak 1000
           exit $LASTEXITCODE
+
+  # wheels.yml creates the release on the same tag; this attaches the zip to
+  # it once it exists, so neither workflow waits on the other's gates.
+  release:
+    name: attach onec-windows-x64.zip
+    needs: [onec, wheel-test, coexist]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: onec-windows-x64-mingw
+          path: dist
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l dist
+          test -f dist/onec-windows-x64.zip
+          for i in $(seq 1 50); do
+            gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            echo "release $TAG not created yet ($i)"; sleep 60
+          done
+          gh release upload "$TAG" dist/onec-windows-x64.zip -R "$GITHUB_REPOSITORY"
