@@ -113,9 +113,17 @@ PyPI comes later.  Install one by URL,
   `pyopennec-<ver>-cp312-abi3-macosx_14_0_arm64.whl`.  LAPACK is Apple's
   Accelerate.  OpenMP is Homebrew's libomp, deliberately not vendored, so
   first `brew install libomp`.
-* **Windows**: not supported for now.  OpenNEC is C99 `complex double`,
-  which MSVC does not have; build from source with a C99 toolchain if you
-  need it.
+* **Windows**: no wheel yet.  OpenNEC is C99 `complex double`, which MSVC
+  does not have; `.github/workflows/windows-mingw.yml` builds one with
+  MinGW-w64, but releases do not carry it yet.
+
+**onec.exe for Windows.**  From v0.3.0 each release also carries
+`onec-windows-x64.zip`: OpenNEC's console engine as one signed program per
+CPU level (`onec.exe` for any x86-64, `onec-avx2.exe` for AVX2), built with
+MinGW-w64 with OpenBLAS linked in, so it needs nothing beside it on
+Windows 10 or later.  `onec.exe -i antenna.nec -o antenna.out`; its
+`README.txt` covers threads, and its licence files and
+`THIRD-PARTY-NOTICES.txt` the libraries linked in.
 
 The exact filenames for a release are on its page; `pyopennec.BACKEND`
 (`"scipy-openblas32"` / `"accelerate"`) and `pyopennec.OPENMP` say what you
