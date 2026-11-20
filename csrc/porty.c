@@ -108,6 +108,7 @@ typedef struct {
   int ground;
   double epsr, sigma;
   int ek;
+  int fill_reuse; /* OpenNEC's ctx->fill_reuse: 0 default, 1 on, -1 off */
 } spec_t;
 
 typedef struct {
@@ -268,6 +269,8 @@ static int append_card(deck_t *deck, const char *code, const int *iv, int ni,
 static context_t *engine_build(const spec_t *s, char *err, size_t errlen)
 {
   context_t *ctx = create_context();
+  if (ctx)
+    ctx->fill_reuse = s->fill_reuse;
   if (!ctx) {
     snprintf(err, errlen, "out of memory creating an OpenNEC context");
     return NULL;
@@ -956,13 +959,18 @@ static void Structure_dealloc(PyObject *op)
 static PyObject *Structure_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
   static char *kwlist[] = {"wires", "ports", "loads", "ground", "epsr", "sigma",
-                           "extended_kernel", NULL};
+                           "extended_kernel", "fill_reuse", NULL};
   PyObject *wires, *ports, *loads = Py_None;
-  int ground = GROUND_FREE, ek = 0;
+  int ground = GROUND_FREE, ek = 0, fill_reuse = 0;
   double epsr = 1.0, sigma = 0.0;
-  if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO|O$iddp", kwlist, &wires, &ports, &loads,
-                                   &ground, &epsr, &sigma, &ek))
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO|O$iddpi", kwlist, &wires, &ports, &loads,
+                                   &ground, &epsr, &sigma, &ek, &fill_reuse))
     return NULL;
+  if (fill_reuse < -1 || fill_reuse > 1) {
+    PyErr_Format(PyExc_ValueError, "fill_reuse: must be -1 (off), 0 (default) or 1 (on), got %d",
+                 fill_reuse);
+    return NULL;
+  }
 
   allocfunc alloc = (allocfunc)PyType_GetSlot(type, Py_tp_alloc);
   StructureObject *self = (StructureObject *)alloc(type, 0);
@@ -973,6 +981,7 @@ static PyObject *Structure_new(PyTypeObject *type, PyObject *args, PyObject *kwd
   s->epsr = epsr;
   s->sigma = sigma;
   s->ek = ek;
+  s->fill_reuse = fill_reuse;
 
   if (ground != GROUND_FREE && ground != GROUND_REFLECTION && ground != GROUND_PERFECT &&
       ground != GROUND_SOMMERFELD) {
@@ -1214,7 +1223,7 @@ static PyType_Slot Structure_slots[] = {
   {Py_tp_methods, Structure_methods},
   {Py_tp_getset, Structure_getset},
   {Py_tp_doc, "Structure(wires, ports, loads=None, *, ground=-1, epsr=1, sigma=0, "
-              "extended_kernel=False)\n\n"
+              "extended_kernel=False, fill_reuse=0)\n\n"
               "wires: (tag, nseg, (x1,y1,z1), (x2,y2,z2), radius) in metres.\n"
               "ports: (tag, seg); tag 0 numbers segments absolutely.\n"
               "loads: (type 0-5, tag, seg_from, seg_to, f1, f2, f3), LD card fields."},
