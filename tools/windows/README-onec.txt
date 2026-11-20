@@ -15,4 +15,6 @@ Threads
   set OPENBLAS_NUM_THREADS=8   the factor alone, when set
 Without them every logical processor is used.
 
-See LICENSE.OpenNEC.txt and THIRD-PARTY-NOTICES.txt.
+Both programs are Authenticode-signed.
+
+See LICENSE.OpenNEC.txt, LICENSE.pyopennec.txt and THIRD-PARTY-NOTICES.txt.
