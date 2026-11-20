@@ -117,13 +117,8 @@ PyPI comes later.  Install one by URL,
   does not have; `.github/workflows/windows-mingw.yml` builds one with
   MinGW-w64, but releases do not carry it yet.
 
-**onec.exe for Windows.**  From v0.3.0 each release also carries
-`onec-windows-x64.zip`: OpenNEC's console engine as one signed program per
-CPU level (`onec.exe` for any x86-64, `onec-avx2.exe` for AVX2), built with
-MinGW-w64 with OpenBLAS linked in, so it needs nothing beside it on
-Windows 10 or later.  `onec.exe -i antenna.nec -o antenna.out`; its
-`README.txt` covers threads, and its licence files and
-`THIRD-PARTY-NOTICES.txt` the libraries linked in.
+**onec for Windows** comes from OpenNEC's own releases
+(https://github.com/maurymarkowitz/OpenNEC/releases).
 
 The exact filenames for a release are on its page; `pyopennec.BACKEND`
 (`"scipy-openblas32"` / `"accelerate"`) and `pyopennec.OPENMP` say what you

@@ -1,11 +1,10 @@
-THIRD-PARTY NOTICES: the MinGW-w64 (MSYS2 UCRT64) Windows builds of OpenNEC
+THIRD-PARTY NOTICES: the MinGW-w64 (MSYS2 UCRT64) Windows build of pyopennec
 
-onec.exe and pyopennec's _porty.pyd are single files: the libraries below are
-linked into them. Their copyright notices and licence texts follow, as those
+pyopennec's _porty.pyd is a single file: the libraries below are linked into
+it. Their copyright notices and licence texts follow, as those
 licences require. The Universal C Runtime is part of Windows and is not
 redistributed here.
 
-  pyopennec (the exit shim, onec_exit.c)      MIT (LICENSE.pyopennec.txt)
   OpenNEC                                      MIT (LICENSE.OpenNEC.txt)
   TinyExpr (in OpenNEC)                        zlib
   OpenBLAS                                     BSD-3-Clause
